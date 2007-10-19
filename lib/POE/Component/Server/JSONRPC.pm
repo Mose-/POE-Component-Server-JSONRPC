@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use base qw/Class::Accessor::Fast/;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use POE qw/
     Component::Server::TCP

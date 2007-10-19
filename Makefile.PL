@@ -4,6 +4,7 @@ all_from 'lib/POE/Component/Server/JSONRPC.pm';
 
 build_requires 'Test::More';
 
+requires 'Class::Accessor::Fast';
 requires 'POE';
 requires 'POE::Filter::Line';
 requires 'POE::Component::Server::TCP';
