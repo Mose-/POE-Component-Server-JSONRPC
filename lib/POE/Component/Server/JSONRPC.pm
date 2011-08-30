@@ -3,21 +3,30 @@ use strict;
 use warnings;
 use base qw/Class::Accessor::Fast/;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use POE qw/
-    Component::Server::TCP
     Filter::Line
     /;
-use JSON::Any;
+use JSON;
 
 =head1 NAME
 
-POE::Component::Server::JSONRPC - POE tcp based JSON-RPC server
+POE::Component::Server::JSONRPC - POE tcp or http based JSON-RPC server
 
 =head1 SYNOPSIS
 
-    POE::Component::Server::JSONRPC->new(
+    #http version:
+    POE::Component::Server::JSONRPC::Http->new(
+        Port    => 3000,
+        Handler => {
+            'echo' => 'echo',
+            'sum'  => 'sum',
+        },
+    );
+    
+    #tcp version:
+    POE::Component::Server::JSONRPC::Tcp->new(
         Port    => 3000,
         Handler => {
             'echo' => 'echo',
@@ -39,7 +48,7 @@ POE::Component::Server::JSONRPC - POE tcp based JSON-RPC server
 
 =head1 DESCRIPTION
 
-This module is a POE component for tcp based JSON-RPC Server.
+This module is a POE component for tcp or http based JSON-RPC Server.
 
 The specification is defined on http://json-rpc.org/ and this module use JSON-RPC 1.0 spec (1.1 does not cover tcp streams)
 
@@ -73,13 +82,13 @@ sub new {
     my $self = shift->SUPER::new( @_ > 1 ? {@_} : $_[0] );
 
     $self->{parent} = $poe_kernel->get_active_session->ID;
-    $self->{json} ||= JSON::Any->new;
+    $self->{json} ||= JSON->new;
 
-    my $session = POE::Session->create(
+    my $session = POE::Session->create(                
         object_states => [
             $self => {
                 map { ( $_ => "poe_$_", ) }
-                    qw/_start tcp_input_handler result error/
+                    qw/_start init_server input_handler result error send/
             },
         ],
     );
@@ -95,7 +104,11 @@ sub new {
 
 A session id of PoCo::Server::JSONRPC itself.
 
-=item ARG1 .. ARGN
+=item ARG1
+
+The id of the client you're treating, send that back in result/error.
+
+=item ARG2 .. ARGN
 
 JSONRPC argguments
 
@@ -105,7 +118,7 @@ ex) If you send following request
 
     {"method":"echo", "params":["foo", "bar"]}
 
-then, "echo" handler is called and parameters is that ARG0 is component session id, ARG1 "foo", ARG2 "bar".
+then, "echo" handler is called and parameters is that ARG0 is component session id, ARG1 is client id, ARG2 "foo", ARG3 "bar".
 
 =head1 HANDLER RESPONSE
 
@@ -113,7 +126,7 @@ You must call either "result" or "error" state in your handlers to response resu
 
 ex:
 
-   $kernel->post( $component_session_id => "result" => "result value" )
+   $kernel->post( $component_session_id => "result" => $client_id, "result value" )
 
 $component_session_id is ARG0 in handler. If you do above, response is:
 
@@ -129,74 +142,59 @@ Inner method for POE states.
 =cut
 
 sub poe__start {
-    my ($self, $kernel, $session) = @_[OBJECT, KERNEL, SESSION];
+    my ($self, $kernel, $session, $heap) = @_[OBJECT, KERNEL, SESSION, HEAP];
 
-    my $bind = sub {
-        my $method = $_[0];
-
-        return sub {
-            my ($kernel, $tcp_session, @args) = @_[KERNEL, SESSION, ARG0..$#_ ];
-            $kernel->post( $session->ID, $method, $tcp_session->ID, @args );
-        };
-    };
-
-    $self->{tcp} = POE::Component::Server::TCP->new(
-        Port => $self->{Port},
-        $self->{Address}     ? ( Address     => $self->{Address} )     : (),
-        $self->{Hostname}    ? ( Hostname    => $self->{Hostname} )    : (),
-        $self->{Domain}      ? ( Domain      => $self->{Domain} )      : (),
-        $self->{Concurrency} ? ( Concurrency => $self->{Concurrency} ) : (),
-
-        ClientInput        => $bind->('tcp_input_handler'),
-#        ClientConnected    => $bind->('tcp_connect_handler'),
-#        ClientDisconnected => $bind->('tcp_disconnect_handler'),
-#        ClientError        => $bind->('tcp_client_error_handler'),
-#        ClientFlushed      => $bind->('tcp_client_flush_handler'),
-
-        ClientInputFilter => $self->{ClientInputFilter} || POE::Filter::Line->new,
-        ClientOutputFilter => $self->{ClientOutputFilter} || POE::Filter::Line->new,
-
-        InlineStates => {
-            send => sub {
-                my ($heap, $data) = @_[HEAP, ARG0];
-                $heap->{client}->put($data) if $heap->{client};
-            },
-        },
-    );
+    $heap->{clients} = {};
+    $heap->{id} = 0;
+    
+    $kernel->yield('init_server');
 }
 
-=head2 poe_tcp_input_handler
+=head2 poe_init_server
+    Should be defined in Http or Tcp
+=cut
+
+sub poe_init_server { print "error init_server\n"; }
+
+=head2 poe_input_handler
 
 =cut
 
-sub poe_tcp_input_handler {
-    my ($self, $kernel, $session, $heap, $client, @args) = @_[OBJECT, KERNEL, SESSION, HEAP, ARG0..$#_ ];
-    $heap->{client} = $client;
-
+sub poe_input_handler {
+    my ($self, $kernel, $session, $heap, $request, $response, $dirmatch) = @_[OBJECT, KERNEL, SESSION, HEAP, ARG0..$#_ ];
+    
+    $heap->{clients}->{$heap->{id}} = {json_id => undef, response => $response};
+    
     my $json;
     eval {
-        $json = $self->{json}->Load( $args[0] );
+        $json = $self->{json}->decode( $request->content );
     };
     if ($@) {
-        $kernel->yield('error', q{invalid json request});
+        $kernel->yield('error', $heap->{id}, q{invalid json request});
         return;
     }
+    
+    $heap->{clients}->{$heap->{id}} = {json_id => $json->{id}, response => $response};
 
     unless ($json and $json->{method}) {
-        $kernel->yield('error', q{parameter "method" is required});
+        $kernel->yield('error', $heap->{id}, q{parameter "method" is required});
         return;
     }
 
     unless ($self->{Handler}{ $json->{method} }) {
-        $kernel->yield('error', qq{no such method "$json->{method}"});
+        $kernel->yield('error', $heap->{id}, qq{no such method "$json->{method}"});
         return;
     }
 
-    $heap->{id} = $json->{id};
     my $handler = $self->{Handler}{ $json->{method} };
     my @params = @{ $json->{params} || [] };
 
-    $kernel->post( $self->{parent}, $handler, $session->ID, @params );
+    $kernel->post($self->{parent}, $handler, $session->ID, $heap->{id}, @params);
+    
+    $heap->{id}++;
+    if ($heap->{id}>=65535) { # limit to 2 bytes
+        $heap->{id} = 0;
+    }
 }
 
 =head2 poe_result
@@ -204,16 +202,23 @@ sub poe_tcp_input_handler {
 =cut
 
 sub poe_result {
-    my ($self, $kernel, $heap, @results) = @_[OBJECT, KERNEL, HEAP, ARG0..$#_ ];
+    my ($self, $kernel, $heap, $id, @results) = @_[OBJECT, KERNEL, HEAP, ARG0..$#_ ];
 
-    $kernel->post(
-        $heap->{client} => send => $self->{json}->Dump(
-            {   id => $heap->{id} || undef,
+    #~ print "answering to ".$id."\n";
+
+    my $client = $heap->{clients}->{$id};
+    
+    my $json_content = $self->{json}->encode(
+            {   id => $client->{json_id} || undef,
                 error  => undef,
                 result => (@results > 1 ? \@results : $results[0]),
             }
-        ),
-    );
+        );
+        
+    #~ print "json content : ".$json_content."\n";
+        
+    $kernel->yield('send',$client->{response},$json_content);
+    delete $heap->{clients}->{$id};
 }
 
 =head2 poe_error
@@ -221,23 +226,33 @@ sub poe_result {
 =cut
 
 sub poe_error {
-    my ($self, $kernel, $heap, $error) = @_[OBJECT, KERNEL, HEAP, ARG0];
+    my ($self, $kernel, $heap, $id, $error) = @_[OBJECT, KERNEL, HEAP, ARG0..$#_];
 
-    $kernel->post(
-        $heap->{client} => send => $self->{json}->Dump(
-            {   id => $heap->{id} || undef,
-                error  => $error,
-                result => undef,
-            }
-        ),
+    my $client = $heap->{clients}->{$id};
+    
+    my $json_error_content = $self->{json}->encode(
+        {   id => $client->{json_id} || undef,
+            error  => $error,
+            result => undef,
+        }
     );
-
+    
+    #~ print "json content : ".$json_error_content."\n";
+    
+    $kernel->yield('send',$client->{response},$json_error_content);
+    delete $heap->{clients}->{$id};
 }
 
+=head2 poe_send
+    Should be defined in Http or Tcp
+=cut
+
+sub poe_send { print "error poe_send\n"; }
 
 =head1 AUTHOR
 
 Daisuke Murase <typester@cpan.org>
+Côme BERNIGAUD <come.bernigaud@laposte.net>
 
 =head1 COPYRIGHT
 
