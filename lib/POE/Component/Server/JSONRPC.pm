@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use base qw/Class::Accessor::Fast/;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use POE qw/
     Filter::Line
@@ -35,15 +35,15 @@ POE::Component::Server::JSONRPC - POE tcp or http based JSON-RPC server
     );
     
     sub echo {
-        my ($kernel, $jsonrpc, @params) = @_[KERNEL, ARG0..$#_ ];
+        my ($kernel, $jsonrpc, $id, @params) = @_[KERNEL, ARG0..$#_ ];
     
-        $kernel->post( $jsonrpc => 'result' => @params );
+        $kernel->post( $jsonrpc => 'result' => $id, @params );
     }
     
     sub sum {
-        my ($kernel, $jsonrpc, @params) = @_[KERNEL, ARG0..$#_ ];
+        my ($kernel, $jsonrpc, $id, @params) = @_[KERNEL, ARG0..$#_ ];
     
-        $kernel->post( $jsonrpc => 'result' => $params[0] + $params[1] );
+        $kernel->post( $jsonrpc => 'result' => $id, $params[0] + $params[1] );
     }
 
 =head1 DESCRIPTION

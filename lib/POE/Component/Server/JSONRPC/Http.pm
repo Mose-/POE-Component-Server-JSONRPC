@@ -23,7 +23,7 @@ use warnings;
 use POE::Component::Server::JSONRPC; # for old Perl 5.005
 use base qw(POE::Component::Server::JSONRPC);
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use POE qw/
     Component::Server::SimpleHTTP
@@ -67,8 +67,6 @@ sub poe_init_server {
                         'EVENT'         =>      'input_handler',
                 },
         ],
-
-        'LOGHANDLER' => {},
     );
 }
 
