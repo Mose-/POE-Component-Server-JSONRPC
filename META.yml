@@ -1,6 +1,6 @@
 --- 
-abstract: POE tcp based JSON-RPC server
-author: Daisuke Murase <typester@cpan.org>
+abstract: POE http or tcp based JSON-RPC server
+author: Côme BERNIGAUD <come.bernigaud@laposte.net>
 build_requires: 
   Test::More: 0
 distribution_type: module
@@ -16,8 +16,10 @@ no_index:
     - t
 requires: 
   Class::Accessor::Fast: 0
-  JSON::Any: 0
+  JSON: 0
+  JSON::Client::RPC: 0
   POE: 0
   POE::Component::Server::TCP: 0
+  POE::Component::Server::SimpleHTTP: 0
   POE::Filter::Line: 0
-version: 0.02
+version: 0.04

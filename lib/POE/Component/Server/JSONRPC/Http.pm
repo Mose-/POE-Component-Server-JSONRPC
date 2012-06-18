@@ -23,7 +23,7 @@ use warnings;
 use POE::Component::Server::JSONRPC; # for old Perl 5.005
 use base qw(POE::Component::Server::JSONRPC);
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use POE qw/
     Component::Server::SimpleHTTP
@@ -38,7 +38,8 @@ use Data::Dumper;
 POE::Component::Server::JSONRPC::Http - POE http based JSON-RPC server
 
 =head2 new
-    constructor
+
+constructor
 =cut
 
 sub new {
@@ -47,40 +48,73 @@ sub new {
 }
 
 =head2 poe_init_server
-    Init HTTP Server.
+
+Init HTTP Server.
 =cut
 
 sub poe_init_server {
     my ($self, $kernel, $session, $heap) = @_[OBJECT, KERNEL, SESSION, HEAP];
-    
+
     $kernel->alias_set( 'JSONRPCHTTP' );
-    
+
+    if (defined($self->{Authenticate})) {
+        $kernel->state('http_input_handler' , $self, 'poe_http_authentication_input_handler');
+    } else {
+        $kernel->state('http_input_handler' , $self, 'poe_input_handler');
+    }
+
     $self->{http} = POE::Component::Server::SimpleHTTP->new(
         'ALIAS'         =>      'HTTPD',
         'PORT'          =>      $self->{Port},
-        $self->{Address}     ? ('ADDRESS'     => $self->{Address} )     : (),
-        $self->{Hostname}    ? ('HOSTNAME'    => $self->{Hostname} )    : (),
+        $self->{Address}     ? ('ADDRESS'               => $self->{Address} )                   : (),
+        $self->{Hostname}    ? ('HOSTNAME'              => $self->{Hostname} )                  : (),
+        $self->{SslKey}      ? ('SSLKEYCERT'            => [$self->{SslKey}, $self->{SslCert}]) : (),
+        $self->{SslCacert}   ? ('SSLINTERMEDIATECACERT' => $self->{SslCacert} )                 : (),
         'HANDLERS'      =>      [
                 {
                         'DIR'           =>      '.*',
                         'SESSION'       =>      'JSONRPCHTTP',
-                        'EVENT'         =>      'input_handler',
+                        'EVENT'         =>      'http_input_handler',
                 },
         ],
     );
 }
 
+=head2 poe_http_authentication_input_handler
+
+This function is used to treat HTTP authentication if needed
+=cut
+
+sub poe_http_authentication_input_handler {
+    my ($self, $kernel, $session, $heap, $request, $response, $dirmatch) = @_[OBJECT, KERNEL, SESSION, HEAP, ARG0..$#_ ];
+
+    my ( $login, $password ) = $request->authorization_basic();
+    if (&{$self->{Authenticate}}($login,$password)) {
+        # Authentication worked
+        $kernel->post( 'JSONRPCHTTP', 'input_handler', $request, $response, $dirmatch);
+    } else {
+        # Set the authorization
+        $response->header( 'WWW-Authenticate' => 'Basic realm="JSONRPCRealm"' );
+        $response->code( 401 );
+        $response->content( 'FORBIDDEN.' );
+
+        # Send it off!
+        $kernel->post( 'HTTPD', 'DONE', $response );
+    }
+}
+
 =head2 poe_send
-    Send HTTP response
+
+Send HTTP response
 =cut
 
 sub poe_send {
     my ($kernel,$response, $content) = @_[KERNEL,ARG0..$#_];
-    
+
     #HTTP
     $response->code( 200 );
     $response->content( $content );
-    
+
     $kernel->post( 'HTTPD', 'DONE', $response );
 }
 

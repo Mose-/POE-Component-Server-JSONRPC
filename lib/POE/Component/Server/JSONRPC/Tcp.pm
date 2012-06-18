@@ -16,7 +16,8 @@ use JSON::Any;
 POE::Component::Server::JSONRPC::Tcp - POE tcp based JSON-RPC server
 
 =head2 new
-    constructor
+
+constructor
 =cut
 
 sub new {
@@ -25,12 +26,13 @@ sub new {
 }
 
 =head2 poe_init_server
-    Init TCP Server.
+
+Init TCP Server.
 =cut
 
 sub poe_init_server {
     my ($self, $kernel, $session, $heap) = @_[OBJECT, KERNEL, SESSION, HEAP];
-    
+
     my $bind = sub {
         my $method = $_[0];
 
@@ -66,12 +68,13 @@ sub poe_init_server {
 }
 
 =head2 poe_send
-    Send TCP response
+
+Send TCP response
 =cut
 
 sub poe_send {
     my ($kernel,$response, $content) = @_[KERNEL,ARG0..$#_];
-    
+
     # TCP
     $kernel->post($response => send => $response,$content);
 }
