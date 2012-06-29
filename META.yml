@@ -22,4 +22,4 @@ requires:
   POE::Component::Server::TCP: 0
   POE::Component::Server::SimpleHTTP: 0
   POE::Filter::Line: 0
-version: 0.04
+version: 0.05
